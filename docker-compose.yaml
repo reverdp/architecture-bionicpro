@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  openldap:
+    image: osixia/openldap:1.5.0
+    command: --copy-service
+    environment:
+      LDAP_ORGANISATION: BionicPro
+      LDAP_DOMAIN: example.com
+      LDAP_ADMIN_PASSWORD: admin
+      LDAP_CONFIG_PASSWORD: config
+      LDAP_TLS: "false"
+    volumes:
+      - ./ldap/config.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-init.ldif:ro
+    ports:
+      - "389:389"
+
   keycloak_db:
     image: postgres:14
     environment:
@@ -25,6 +39,11 @@ services:
       - --import-realm
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+      - ./keycloak/libs/keycloak-russian-providers.jar:/opt/keycloak/providers/keycloak-russian-providers.jar
+      - ./keycloak/libs/json-path-2.7.0.jar:/opt/keycloak/providers/json-path.jar
+      - ./keycloak/libs/json-smart-2.4.7.jar:/opt/keycloak/providers/json-smart.jar
+      - ./keycloak/libs/asm-all-5.2.jar:/opt/keycloak/providers/asm-all.jar
+      - ./keycloak/libs/accessors-smart-2.4.7.jar:/opt/keycloak/providers/accessors-smart.jar
     ports:
       - "8080:8080"
     depends_on:
@@ -37,6 +56,30 @@ services:
       - "3000:3000"
     environment:
       REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_KEYCLOAK_URL: http://localhost:8080
-      REACT_APP_KEYCLOAK_REALM: reports-realm
-      REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
+      REACT_APP_AUTH_URL: http://localhost:8001
+  bionicpro-auth:
+    build:
+      context: ./bionicpro-auth
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./bionicpro-auth/data:/app/data
+    environment:
+      AUTH_LISTEN_ADDR: :8001
+      AUTH_PUBLIC_BASE_URL: http://localhost:8001
+      AUTH_FRONTEND_URL: http://localhost:3000
+      AUTH_SESSION_COOKIE_NAME: bionicpro_auth_session
+      AUTH_SESSION_TTL: 25m
+      AUTH_PROFILE_DB_PATH: /app/data/bionicpro-auth.db
+      KEYCLOAK_PUBLIC_URL: http://localhost:8080
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: reports-realm
+      KEYCLOAK_CLIENT_ID: bionicpro-auth
+      KEYCLOAK_CLIENT_SECRET: rrLvqGXkNZDvkwSddOrns5KMoATz7eH7
+      KEYCLOAK_REDIRECT_URL: http://localhost:8001/auth/callback
+      KEYCLOAK_SCOPES: openid profile email
+      KEYCLOAK_DEFAULT_IDP_ALIAS: yandex
+      AUTH_ENCRYPTION_KEY: 4+E+MFPHE0k1oUC1dQmmN/QN6mMnQv9ViqkMh7t0bL0=
+    depends_on:
+      - keycloak
