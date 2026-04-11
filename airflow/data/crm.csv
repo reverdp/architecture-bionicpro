@@ -1,0 +1,4 @@
+username,email,first_name,last_name,prosthesis_id,prosthesis_type,market
+prothetic1,prothetic1@example.com,Prothetic,One,BP-RU-001,hand,RU
+prothetic2,prothetic2@example.com,Prothetic,Two,BP-RU-002,hand,RU
+prothetic3,prothetic3@example.com,Prothetic,Three,BP-RU-003,hand,RU

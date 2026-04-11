@@ -12,6 +12,7 @@ type Config struct {
 	ListenAddr       string
 	PublicBaseURL    string
 	FrontendURL      string
+	InternalSecret   string
 	SessionCookie    string
 	SessionTTL       time.Duration
 	EncryptionKey    []byte
@@ -31,6 +32,7 @@ func Load() (Config, error) {
 		ListenAddr:       getEnv("AUTH_LISTEN_ADDR", ":8001"),
 		PublicBaseURL:    getEnv("AUTH_PUBLIC_BASE_URL", "http://localhost:8001"),
 		FrontendURL:      getEnv("AUTH_FRONTEND_URL", "http://localhost:3000"),
+		InternalSecret:   getEnv("AUTH_INTERNAL_SECRET", ""),
 		SessionCookie:    getEnv("AUTH_SESSION_COOKIE_NAME", "bionicpro_auth_session"),
 		SessionTTL:       getEnvDuration("AUTH_SESSION_TTL", 25*time.Minute),
 		KeycloakPublic:   getEnv("KEYCLOAK_PUBLIC_URL", "http://localhost:8080"),
@@ -52,6 +54,9 @@ func Load() (Config, error) {
 		fmt.Fprintf(os.Stderr, "AUTH_ENCRYPTION_KEY is not set; generated ephemeral in-memory key\n")
 	}
 	cfg.EncryptionKey = key
+	if cfg.InternalSecret == "" {
+		return Config{}, fmt.Errorf("AUTH_INTERNAL_SECRET is required")
+	}
 
 	return cfg, nil
 }

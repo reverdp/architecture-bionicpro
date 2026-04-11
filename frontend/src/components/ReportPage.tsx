@@ -16,6 +16,8 @@ const ReportPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const isAuthenticated = Boolean(session?.authenticated);
 
@@ -90,11 +92,20 @@ const ReportPage: React.FC = () => {
       return;
     }
 
+    if (!dateFrom || !dateTo) {
+      setError('Please select both dates');
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
+      const query = new URLSearchParams({
+        date_from: dateFrom,
+        date_to: dateTo
+      });
 
-      const response = await fetch(`${apiBaseUrl}/reports`, {
+      const response = await fetch(`${apiBaseUrl}/reports?${query.toString()}`, {
         credentials: 'include'
       });
 
@@ -112,6 +123,18 @@ const ReportPage: React.FC = () => {
       if (!response.ok) {
         throw new Error(`Report request failed with status ${response.status}`);
       }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const disposition = response.headers.get('Content-Disposition');
+      const match = disposition?.match(/filename="(.+)"/);
+      link.href = url;
+      link.download = match?.[1] || `report_${dateFrom}_${dateTo}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
 
       await syncSession();
     } catch (err) {
@@ -147,12 +170,34 @@ const ReportPage: React.FC = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
       <div className="p-8 bg-white rounded-lg shadow-md">
         <h1 className="text-2xl font-bold mb-6">Usage Reports</h1>
-        
+
+        <div className="grid grid-cols-1 gap-4 mb-6 sm:grid-cols-2">
+          <label className="flex flex-col text-sm text-gray-700">
+            <span className="mb-1">Date from</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+              className="rounded border border-gray-300 px-3 py-2"
+            />
+          </label>
+
+          <label className="flex flex-col text-sm text-gray-700">
+            <span className="mb-1">Date to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(event) => setDateTo(event.target.value)}
+              className="rounded border border-gray-300 px-3 py-2"
+            />
+          </label>
+        </div>
+
         <button
           onClick={downloadReport}
-          disabled={loading}
+          disabled={loading || !dateFrom || !dateTo}
           className={`px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 ${
-            loading ? 'opacity-50 cursor-not-allowed' : ''
+            loading || !dateFrom || !dateTo ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         >
           {loading ? 'Generating Report...' : 'Download Report'}

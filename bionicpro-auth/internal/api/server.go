@@ -25,6 +25,7 @@ type Server struct {
 }
 
 const sessionIDHeader = "X-Session-Id"
+const internalSecretHeader = "X-Internal-Auth"
 
 func NewServer(cfg config.Config, store *session.Store, keycloakClient *keycloak.Client, profileStore *profile.Store) *Server {
 	server := &Server{
@@ -46,6 +47,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/auth/profile", s.handleProfile)
 	mux.HandleFunc("/auth/refresh", s.handleRefresh)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
+	mux.HandleFunc("/internal/session/resolve", s.handleInternalSessionResolve)
 
 	return s.withJSON(mux)
 }
@@ -282,6 +284,39 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
+func (s *Server) handleInternalSessionResolve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if r.Header.Get(internalSecretHeader) != s.cfg.InternalSecret {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	current, ok := s.currentSession(r)
+	if !ok || !current.Authenticated || current.Subject == "" {
+		writeError(w, http.StatusUnauthorized, "session not found")
+		return
+	}
+
+	rec, err := s.profiles.GetBySubject(r.Context(), current.Subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rec == nil || rec.Profile.Username == "" {
+		writeError(w, http.StatusNotFound, "profile not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"username":      rec.Profile.Username,
+		"subject":       current.Subject,
+	})
+}
+
 func (s *Server) withJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.applyCORS(w, r)
@@ -303,7 +338,7 @@ func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Access-Control-Expose-Headers", sessionIDHeader)
 	w.Header().Set("Vary", "Origin")
 }
