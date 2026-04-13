@@ -5,6 +5,12 @@ type SessionResponse = {
   authenticated: boolean;
 };
 
+type ReportResponse = {
+  url: string;
+  cached: boolean;
+  object_key: string;
+};
+
 const authBaseUrl = process.env.REACT_APP_AUTH_URL;
 const apiBaseUrl = process.env.REACT_APP_API_URL;
 
@@ -124,17 +130,8 @@ const ReportPage: React.FC = () => {
         throw new Error(`Report request failed with status ${response.status}`);
       }
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      const disposition = response.headers.get('Content-Disposition');
-      const match = disposition?.match(/filename="(.+)"/);
-      link.href = url;
-      link.download = match?.[1] || `report_${dateFrom}_${dateTo}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      const payload = (await response.json()) as ReportResponse;
+      window.location.assign(payload.url);
 
       await syncSession();
     } catch (err) {

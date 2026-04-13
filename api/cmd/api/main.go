@@ -14,6 +14,7 @@ import (
 	"reports-api/internal/auth"
 	"reports-api/internal/config"
 	"reports-api/internal/report"
+	"reports-api/internal/storage"
 
 	_ "github.com/lib/pq"
 )
@@ -36,7 +37,12 @@ func main() {
 
 	authClient := auth.NewClient(cfg)
 	service := report.NewService(db)
-	handler := api.NewServer(cfg, authClient, service)
+	store, err := storage.NewS3Client(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey, cfg.HTTPTimeout)
+	if err != nil {
+		log.Fatalf("create s3 client: %v", err)
+	}
+
+	handler := api.NewServer(cfg, authClient, service, store)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,

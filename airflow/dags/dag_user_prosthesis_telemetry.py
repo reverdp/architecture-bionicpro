@@ -161,7 +161,6 @@ def load_user_prosthesis_telemetry():
         with connection:
             with connection.cursor() as cursor:
                 cursor.execute(CREATE_TABLE_SQL)
-                cursor.execute(DROP_CONSTRAINT_SQL)
                 cursor.executemany(INSERT_SQL, report_rows)
     finally:
         connection.close()

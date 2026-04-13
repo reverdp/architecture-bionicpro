@@ -1,28 +1,38 @@
 package api
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
 	"reports-api/internal/auth"
 	"reports-api/internal/config"
 	"reports-api/internal/report"
+	"reports-api/internal/storage"
 )
 
 type Server struct {
 	cfg     config.Config
 	auth    *auth.Client
 	reports *report.Service
+	store   *storage.S3Client
 }
 
-func NewServer(cfg config.Config, authClient *auth.Client, reports *report.Service) *Server {
+type reportResponse struct {
+	URL       string `json:"url"`
+	Cached    bool   `json:"cached"`
+	ObjectKey string `json:"object_key"`
+}
+
+func NewServer(cfg config.Config, authClient *auth.Client, reports *report.Service, store *storage.S3Client) *Server {
 	return &Server{
 		cfg:     cfg,
 		auth:    authClient,
 		reports: reports,
+		store:   store,
 	}
 }
 
@@ -56,21 +66,43 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := fmt.Sprintf("report_%s_%s_%s.csv", identity.Username, dateFrom.Format("20060102"), dateTo.Format("20060102"))
-	var buf bytes.Buffer
-	err = s.reports.WriteCSV(r.Context(), &buf, report.Query{
+	query := report.Query{
 		Username: identity.Username,
 		DateFrom: dateFrom,
 		DateTo:   dateTo,
-	})
+	}
+
+	objectKey := reportObjectKey(query)
+
+	exists, err := s.store.HeadObject(r.Context(), objectKey)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	_, _ = w.Write(buf.Bytes())
+	if !exists {
+		csvData, err := s.reports.CSV(r.Context(), query)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		filename := fmt.Sprintf("report_%s_%s_%s.csv", identity.Username, dateFrom.Format("20060102"), dateTo.Format("20060102"))
+		err = s.store.PutObject(r.Context(), objectKey, csvData, "text/csv; charset=utf-8", map[string]string{
+			"Cache-Control":       "public, max-age=300, s-maxage=86400, immutable",
+			"Content-Disposition": fmt.Sprintf("attachment; filename=%q", filename),
+		})
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, reportResponse{
+		URL:       s.cdnURL(objectKey),
+		Cached:    exists,
+		ObjectKey: objectKey,
+	})
 }
 
 func (s *Server) withCORS(next http.Handler) http.Handler {
@@ -126,9 +158,13 @@ func parsePeriod(r *http.Request) (time.Time, time.Time, error) {
 }
 
 func writeJSONError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(fmt.Sprintf(`{"error":%q}`, message)))
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
@@ -136,4 +172,17 @@ func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
 		w.Header().Set("Allow", strings.Join(methods, ", "))
 	}
 	writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+}
+
+func reportObjectKey(query report.Query) string {
+	return path.Join(
+		query.Username,
+		query.DateFrom.UTC().Format("2006-01-02")+"_"+query.DateTo.UTC().Format("2006-01-02"),
+		"report.csv",
+	)
+}
+
+func (s *Server) cdnURL(objectKey string) string {
+	base := strings.TrimRight(s.cfg.CDNBaseURL, "/")
+	return base + "/" + objectKey
 }

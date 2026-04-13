@@ -1,11 +1,11 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
-	"io"
 	"time"
 )
 
@@ -23,7 +23,7 @@ func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
 }
 
-func (s *Service) WriteCSV(ctx context.Context, w io.Writer, query Query) error {
+func (s *Service) CSV(ctx context.Context, query Query) ([]byte, error) {
 	const sqlQuery = `
 SELECT
     username,
@@ -50,11 +50,12 @@ ORDER BY prosthesis_id
 
 	rows, err := s.db.QueryContext(ctx, sqlQuery, query.Username, query.DateFrom, query.DateTo)
 	if err != nil {
-		return fmt.Errorf("query report rows: %w", err)
+		return nil, fmt.Errorf("query report rows: %w", err)
 	}
 	defer rows.Close()
 
-	writer := csv.NewWriter(w)
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
 	if err := writer.Write([]string{
 		"username",
 		"first_name",
@@ -72,7 +73,7 @@ ORDER BY prosthesis_id
 		"last_battery_level",
 		"updated_at",
 	}); err != nil {
-		return fmt.Errorf("write csv header: %w", err)
+		return nil, fmt.Errorf("write csv header: %w", err)
 	}
 
 	for rows.Next() {
@@ -111,7 +112,7 @@ ORDER BY prosthesis_id
 			&lastBatteryLevel,
 			&updatedAt,
 		); err != nil {
-			return fmt.Errorf("scan report row: %w", err)
+			return nil, fmt.Errorf("scan report row: %w", err)
 		}
 
 		record := []string{
@@ -132,18 +133,18 @@ ORDER BY prosthesis_id
 			updatedAt.Format(time.RFC3339),
 		}
 		if err := writer.Write(record); err != nil {
-			return fmt.Errorf("write csv row: %w", err)
+			return nil, fmt.Errorf("write csv row: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate report rows: %w", err)
+		return nil, fmt.Errorf("iterate report rows: %w", err)
 	}
 
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		return fmt.Errorf("flush csv: %w", err)
+		return nil, fmt.Errorf("flush csv: %w", err)
 	}
 
-	return nil
+	return buf.Bytes(), nil
 }
