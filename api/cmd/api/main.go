@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -15,8 +14,6 @@ import (
 	"reports-api/internal/config"
 	"reports-api/internal/report"
 	"reports-api/internal/storage"
-
-	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -25,18 +22,16 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	db, err := sql.Open("postgres", cfg.ReportDBDSN)
-	if err != nil {
-		log.Fatalf("open postgres connection: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Fatalf("ping postgres: %v", err)
-	}
-
 	authClient := auth.NewClient(cfg)
-	service := report.NewService(db)
+	service := report.NewService(
+		cfg.ReportsClickHouseURL,
+		cfg.ReportsClickHouseUser,
+		cfg.ReportsClickHousePassword,
+		cfg.HTTPTimeout,
+	)
+	if err := service.Ping(context.Background()); err != nil {
+		log.Fatalf("ping clickhouse: %v", err)
+	}
 	store, err := storage.NewS3Client(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey, cfg.HTTPTimeout)
 	if err != nil {
 		log.Fatalf("create s3 client: %v", err)
