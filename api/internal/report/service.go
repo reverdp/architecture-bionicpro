@@ -73,7 +73,7 @@ func (s *Service) CSV(ctx context.Context, query Query) ([]byte, error) {
 			avg_battery_level,
 			last_battery_level,
 			updated_at
-		FROM reports.user_prosthesis_telemetry
+		FROM reports.user_prosthesis_telemetry_v2 FINAL
 		WHERE username = '%s'
 		  AND first_event_at <= toDateTime64('%s', 3, 'UTC')
 		  AND last_event_at >= toDateTime64('%s', 3, 'UTC')

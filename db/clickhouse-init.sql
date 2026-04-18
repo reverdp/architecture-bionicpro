@@ -2,12 +2,8 @@ CREATE DATABASE IF NOT EXISTS reports;
 
 CREATE TABLE IF NOT EXISTS reports.user_prosthesis_telemetry (
     username String,
-    first_name String,
-    last_name String,
     prosthesis_id String,
-    prosthesis_type String,
-    market String,
-    telemetry_records_count UInt32,
+    telemetry_records_count UInt64,
     first_event_at DateTime64(3, 'UTC'),
     last_event_at DateTime64(3, 'UTC'),
     avg_signal_rms Float64,

@@ -1,3 +1,5 @@
+ALTER ROLE crm_user WITH REPLICATION;
+
 CREATE TABLE IF NOT EXISTS crm_users (
     username TEXT PRIMARY KEY,
     email TEXT NOT NULL,

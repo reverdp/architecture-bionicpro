@@ -6,7 +6,6 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
-    AIRFLOW_CONN_CRM_DB: postgresql://crm_user:crm_password@crm_db:5432/crm
     AIRFLOW_CONN_TELEMETRY_DB: postgresql://telemetry_user:telemetry_password@telemetry_db:5432/telemetry
     CLICKHOUSE_URL: http://clickhouse:8123
     CLICKHOUSE_DATABASE: reports
@@ -29,6 +28,10 @@ x-airflow-common: &airflow-common
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     airflow-postgres:
+      condition: service_healthy
+    telemetry_db:
+      condition: service_healthy
+    clickhouse:
       condition: service_healthy
   networks:
     - bionicpro
@@ -60,6 +63,14 @@ services:
       - "5433:5432"
   crm_db:
     image: postgres:16
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
     environment:
       POSTGRES_DB: crm
       POSTGRES_USER: crm_user
@@ -68,6 +79,18 @@ services:
       - ./db/crm-init.sql:/docker-entrypoint-initdb.d/crm-init.sql:ro
     ports:
       - "5434:5432"
+    healthcheck:
+      test:
+        - CMD
+        - pg_isready
+        - -U
+        - crm_user
+        - -d
+        - crm
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - bionicpro
   telemetry_db:
@@ -85,16 +108,97 @@ services:
       - /opt/startup/telemetry-start.sh
     ports:
       - "5435:5432"
+    healthcheck:
+      test:
+        - CMD
+        - pg_isready
+        - -U
+        - telemetry_user
+        - -d
+        - telemetry
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - bionicpro
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - bionicpro
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    networks:
+      - bionicpro
+  debezium-connect:
+    image: debezium/connect:2.7.3.Final
+    depends_on:
+      - kafka
+      - crm_db
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium_connect_configs
+      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
+      STATUS_STORAGE_TOPIC: debezium_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports:
+      - "8083:8083"
+    networks:
+      - bionicpro
+  debezium-register:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      - debezium-connect
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        until curl -fsS http://debezium-connect:8083/connectors; do sleep 5; done &&
+        curl -fsS -X PUT http://debezium-connect:8083/connectors/crm-postgres-cdc/config
+        -H 'Content-Type: application/json'
+        --data @/config/crm-postgres-connector.json
+    volumes:
+      - ./db/debezium/crm-postgres-connector.json:/config/crm-postgres-connector.json:ro
     networks:
       - bionicpro
   clickhouse:
     image: clickhouse/clickhouse-server:24.12
+    depends_on:
+      - telemetry_db
     environment:
       CLICKHOUSE_DB: reports
       CLICKHOUSE_USER: reports
       CLICKHOUSE_PASSWORD: reports
     volumes:
       - ./db/clickhouse-init.sql:/docker-entrypoint-initdb.d/01-clickhouse-init.sql:ro
+      - ./db/clickhouse-cdc-init.sql:/docker-entrypoint-initdb.d/02-clickhouse-cdc-init.sql:ro
+      - ./db/clickhouse-reporting-init.sql:/docker-entrypoint-initdb.d/03-clickhouse-reporting-init.sql:ro
     ports:
       - "8123:8123"
     healthcheck:
@@ -140,6 +244,10 @@ services:
     depends_on:
       airflow-postgres:
         condition: service_healthy
+      telemetry_db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
     command: webserver
@@ -153,6 +261,10 @@ services:
     command: scheduler
     depends_on:
       airflow-postgres:
+        condition: service_healthy
+      telemetry_db:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
       airflow-webserver:
         condition: service_healthy
@@ -333,4 +445,3 @@ volumes:
 
 networks:
   bionicpro:
-    name: bionicpro

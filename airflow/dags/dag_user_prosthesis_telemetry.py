@@ -15,18 +15,6 @@ default_args = {
     "start_date": datetime(2026, 4, 11),
 }
 
-CRM_SELECT_SQL = """
-SELECT
-    username,
-    email,
-    first_name,
-    last_name,
-    prosthesis_id,
-    prosthesis_type,
-    market
-FROM crm_users;
-"""
-
 TELEMETRY_SELECT_SQL = """
 SELECT
     event_time,
@@ -46,16 +34,13 @@ CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "")
 CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 
 CREATE_DATABASE_SQL = f"CREATE DATABASE IF NOT EXISTS {CLICKHOUSE_DATABASE};"
+REPORT_TABLE = "user_prosthesis_telemetry"
 
 CREATE_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DATABASE}.user_prosthesis_telemetry (
+CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DATABASE}.{REPORT_TABLE} (
     username String,
-    first_name String,
-    last_name String,
     prosthesis_id String,
-    prosthesis_type String,
-    market String,
-    telemetry_records_count UInt32,
+    telemetry_records_count UInt64,
     first_event_at DateTime64(3, 'UTC'),
     last_event_at DateTime64(3, 'UTC'),
     avg_signal_rms Float64,
@@ -70,13 +55,9 @@ ORDER BY (username, prosthesis_id);
 """
 
 INSERT_SQL = f"""
-INSERT INTO {CLICKHOUSE_DATABASE}.user_prosthesis_telemetry (
+INSERT INTO {CLICKHOUSE_DATABASE}.{REPORT_TABLE} (
     username,
-    first_name,
-    last_name,
     prosthesis_id,
-    prosthesis_type,
-    market,
     telemetry_records_count,
     first_event_at,
     last_event_at,
@@ -90,24 +71,7 @@ INSERT INTO {CLICKHOUSE_DATABASE}.user_prosthesis_telemetry (
 """
 
 
-def _load_crm_rows():
-    crm_rows = {}
-    hook = PostgresHook(postgres_conn_id="crm_db")
-    for row in hook.get_records(CRM_SELECT_SQL):
-        crm_rows[(row[0], row[4])] = {
-            "username": row[0],
-            "email": row[1],
-            "first_name": row[2],
-            "last_name": row[3],
-            "prosthesis_id": row[4],
-            "prosthesis_type": row[5],
-            "market": row[6],
-        }
-    return crm_rows
-
-
 def _build_report_rows():
-    crm_rows = _load_crm_rows()
     grouped = defaultdict(
         lambda: {
             "telemetry_records_count": 0,
@@ -126,12 +90,6 @@ def _build_report_rows():
     for row in hook.get_records(TELEMETRY_SELECT_SQL):
         event_time = row[0]
         key = (row[2], row[1])
-        crm_row = crm_rows.get(key)
-        if crm_row is None:
-            raise ValueError(
-                f"CRM record not found for username={row[2]} prosthesis_id={row[1]}"
-            )
-
         stats = grouped[key]
         stats["telemetry_records_count"] += 1
         stats["signal_rms_total"] += float(row[3])
@@ -152,16 +110,11 @@ def _build_report_rows():
     report_rows = []
     for key, stats in grouped.items():
         username, prosthesis_id = key
-        crm_row = crm_rows[key]
         count = stats["telemetry_records_count"]
         report_rows.append(
             (
                 username,
-                crm_row["first_name"],
-                crm_row["last_name"],
                 prosthesis_id,
-                crm_row["prosthesis_type"],
-                crm_row["market"],
                 count,
                 stats["first_event_at"],
                 stats["last_event_at"],
@@ -211,19 +164,15 @@ def load_user_prosthesis_telemetry():
         json.dumps(
             {
                 "username": row[0],
-                "first_name": row[1],
-                "last_name": row[2],
-                "prosthesis_id": row[3],
-                "prosthesis_type": row[4],
-                "market": row[5],
-                "telemetry_records_count": row[6],
-                "first_event_at": _format_datetime(row[7]),
-                "last_event_at": _format_datetime(row[8]),
-                "avg_signal_rms": row[9],
-                "avg_signal_noise": row[10],
-                "avg_response_time_ms": row[11],
-                "avg_battery_level": row[12],
-                "last_battery_level": row[13],
+                "prosthesis_id": row[1],
+                "telemetry_records_count": row[2],
+                "first_event_at": _format_datetime(row[3]),
+                "last_event_at": _format_datetime(row[4]),
+                "avg_signal_rms": row[5],
+                "avg_signal_noise": row[6],
+                "avg_response_time_ms": row[7],
+                "avg_battery_level": row[8],
+                "last_battery_level": row[9],
                 "updated_at": updated_at,
             },
             ensure_ascii=True,
